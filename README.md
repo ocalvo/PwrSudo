@@ -1,7 +1,7 @@
 # PwrSudo
 Implements Unix/sudo (Execute-Elevated) for powershell
 
-![Screenshoot](/PwrSudo.gif)
+![Screenshoot](https://github.com/ocalvo/PwrSudo/raw/master/PwrSudo.gif)
 
 ## Installation
 
