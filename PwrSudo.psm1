@@ -37,7 +37,12 @@ function global:Enable-SSH
   Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
   Set-Service -Name sshd -StartupType 'Automatic'
   Set-Service -Name ssh-agent -StartupType 'Automatic'
-  New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
+  New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 -Force
+  if (!(Test-Path "HKLM:\SOFTWARE\OpenSSH"))
+  {
+     mkdir "HKLM:\SOFTWARE\OpenSSH"
+  }
+
   New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -PropertyType String -Force
   Start-Service ssh-agent
   Start-Service sshd
@@ -67,60 +72,33 @@ function global:Enable-Execute-Elevated
 {
   if (!(Test-IsAdmin))
   {
-     Open-Elevated -wait powershell -c Enable-Execute-Elevated
+     Open-Elevated -wait powershell -Ex ByPass -c Enable-Execute-Elevated
      return;
   }
 
-  $service = get-service sshd* | select -first 1
-  if ($null -eq $service)
-  {
-    Enable-SSH
-  }
+  $gsudoCmd = (get-command gsudo -ErrorAction Ignore)
 
-  if (!(test-path $keyfile))
+  if ($null -eq $gsudoCmd)
   {
-    ssh-keygen -t rsa -f $keyfile -q -P `"`"
+    $scoopCmd = (get-command scoop -ErrorAction Ignore)
+    if ($null -eq $scoopCmd)
+    {
+      Invoke-Expression (New-Object System.Net.WebClient).DownloadString('https://get.scoop.sh')
+    }
+    scoop install gsudo
+    gsudo config cachemode auto
+    gsudo cache on
   }
-  #Start-Service ssh-agent
-  #ssh-add $keyfilePub
-
-  Add-AdministratorsAuthorizedKeys (Get-Content $keyfilePub)
 }
 
 function global:Execute-Elevated {
-  param([switch]$wait,$cmd)
-
-  [string]$arguments = $args;
-
-  if (!(Test-IsAdmin))
+  param()
+  $gsudoCmd = (get-command gsudo -ErrorAction Ignore)
+  if ($null -eq $gsudoCmd)
   {
-    if (!(Test-Path $keyfile))
-    {
-       Enable-Execute-Elevated
-    }
-    $service = get-service sshd* | select -first 1
-    if ($null -eq $service)
-    {
-       throw "Failed to start SSHD"
-    }
-    else
-    {
-        if ($service.Status -ne 'Running')
-        {
-           Open-Elevated -wait powershell -c Start-Service SSHD
-        }
-    }
-    if ($null -ne $cmd)
-    {
-      [string[]]$command = ("cd",(pwd).Path,";",$cmd)
-      $command+=$args
-    }
-    ssh -i $keyfile $env:USERDOMAIN\$env:USERNAME@localhost $command
+    Enable-Execute-Elevated
   }
-  else
-  {
-    powershell -c $cmd $args
-  }
+  gsudo $args
 }
 
 Export-ModuleMember -Function Enable-Execute-Elevated
