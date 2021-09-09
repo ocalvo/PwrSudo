@@ -68,11 +68,13 @@ function global:Add-AdministratorsAuthorizedKeys()
   $acl | Set-Acl
 }
 
+$_shell = "pwsh"
+
 function global:Enable-Execute-Elevated
 {
   if (!(Test-IsAdmin))
   {
-     Open-Elevated -wait powershell -Ex ByPass -c Enable-Execute-Elevated
+     Open-Elevated -wait $_shell -Ex ByPass -c Enable-Execute-Elevated
      return;
   }
 
@@ -97,6 +99,7 @@ function global:Execute-Elevated {
   if ($null -eq $gsudoCmd)
   {
     Enable-Execute-Elevated
+    $env:path += ";~\scoop\shims\"
   }
   gsudo $args
 }
