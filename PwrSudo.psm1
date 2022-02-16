@@ -68,7 +68,14 @@ function global:Add-AdministratorsAuthorizedKeys()
   $acl | Set-Acl
 }
 
-$_shell = "pwsh"
+if ("Core" -eq $psedition)
+{
+  $_shell = "pwsh"
+}
+else
+{
+  $_shell = "powershell"
+}
 
 function global:Enable-Execute-Elevated
 {
