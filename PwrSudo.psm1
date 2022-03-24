@@ -2,11 +2,21 @@
 $keyfile = $env:HOMEDRIVE+$env:HOMEPATH+'/.ssh/id_rsa_sudo'
 $keyfilePub =  $keyfile+'.pub'
 
+function global:Test-IsUnix
+{
+  return (($PSVersionTable.PSEdition -eq 'Core') -and ($PSVersionTable.Platform -eq 'Unix'))
+}
+
 function global:Test-IsAdmin
 {
+  $isUnix = Test-IsUnix
+  if ($isUnix) {
+    return ((id -u) -eq 0)
+  } else {
     $wi = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     $wp = new-object 'System.Security.Principal.WindowsPrincipal' $wi
     $wp.IsInRole("Administrators") -eq 1
+  }
 }
 
 function global:Open-Elevated
@@ -19,6 +29,7 @@ function global:Open-Elevated
     $psi = new-object System.Diagnostics.ProcessStartInfo $file;
     $psi.Arguments = $arguments;
     $psi.Verb = "runas";
+
     $p = [System.Diagnostics.Process]::Start($psi);
     if ($wait.IsPresent)
     {
@@ -33,19 +44,21 @@ function global:Open-Elevated
 
 function global:Enable-SSH
 {
+  param($shell = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
+
   Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
   Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
   Set-Service -Name sshd -StartupType 'Automatic'
   Set-Service -Name ssh-agent -StartupType 'Automatic'
-  New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 -Force
+  New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
   if (!(Test-Path "HKLM:\SOFTWARE\OpenSSH"))
   {
      mkdir "HKLM:\SOFTWARE\OpenSSH"
   }
 
-  New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -PropertyType String -Force
-  Start-Service ssh-agent
-  Start-Service sshd
+  New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value $shell -PropertyType String -Force
+  Get-Service ssh-agent | Restart-Service
+  Get-Service sshd | Restart-Service
 }
 
 function global:Add-AdministratorsAuthorizedKeys()
@@ -105,8 +118,7 @@ function global:Execute-Elevated {
   $gsudoCmd = (get-command gsudo -ErrorAction Ignore)
   if ($null -eq $gsudoCmd)
   {
-    Enable-Execute-Elevated
-    $env:path += ";~\scoop\shims\"
+    Write-Error "gsudo not found, run Enable-Execute-Elevated"
   }
   gsudo $args
 }
@@ -117,5 +129,7 @@ Export-ModuleMember -Function Open-Elevated
 Export-ModuleMember -Function Add-AdministratorsAuthorizedKeys
 
 set-alias elevate Open-Elevated -scope global
-set-alias sudo Execute-Elevated -scope global
+if (!(Test-IsUnix)) {
+  set-alias sudo Execute-Elevated -scope global
+}
 
