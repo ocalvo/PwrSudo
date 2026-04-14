@@ -1,7 +1,4 @@
 
-$keyfile = $env:HOMEDRIVE+$env:HOMEPATH+'/.ssh/id_rsa_sudo'
-$keyfilePub =  $keyfile+'.pub'
-
 function global:Test-IsUnix
 {
   return (($PSVersionTable.PSEdition -eq 'Core') -and ($PSVersionTable.Platform -eq 'Unix'))
@@ -9,12 +6,11 @@ function global:Test-IsUnix
 
 function global:Test-IsAdmin
 {
-  $isUnix = Test-IsUnix
-  if ($isUnix) {
+  if (Test-IsUnix) {
     return ((id -u) -eq 0)
   } else {
     $wi = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-    $wp = new-object 'System.Security.Principal.WindowsPrincipal' $wi
+    $wp = New-Object 'System.Security.Principal.WindowsPrincipal' $wi
     $wp.IsInRole("Administrators") -eq 1
   }
 }
@@ -22,24 +18,58 @@ function global:Test-IsAdmin
 function global:Open-Elevated
 {
   param([switch]$wait)
-  $file, [string]$arguments = $args;
+  $file, [string]$arguments = $args
 
   if (!(Test-IsAdmin))
   {
-    $psi = new-object System.Diagnostics.ProcessStartInfo $file;
-    $psi.Arguments = $arguments;
-    $psi.Verb = "runas";
-
-    $p = [System.Diagnostics.Process]::Start($psi);
-    if ($wait.IsPresent)
-    {
-        $p.WaitForExit()
-    }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo $file
+    $psi.Arguments = $arguments
+    $psi.Verb = "runas"
+    $p = [System.Diagnostics.Process]::Start($psi)
+    if ($wait.IsPresent) { $p.WaitForExit() }
   }
   else
   {
     & $file $args
   }
+}
+
+function global:Enable-Execute-Elevated
+{
+  if (Test-IsUnix) {
+    Write-Host "On Unix, native sudo is used. No setup needed."
+    return
+  }
+
+  if (!(Test-IsAdmin))
+  {
+    $shell = if ("Core" -eq $PSEdition) { "pwsh" } else { "powershell" }
+    Open-Elevated -wait $shell -Ex ByPass -c Enable-Execute-Elevated
+    return
+  }
+
+  if ($null -eq (Get-Command gsudo -ErrorAction Ignore))
+  {
+    if ($null -eq (Get-Command scoop -ErrorAction Ignore))
+    {
+      Invoke-Expression (New-Object System.Net.WebClient).DownloadString('https://get.scoop.sh')
+    }
+    scoop install gsudo
+  }
+
+  gsudo config CacheMode auto
+  gsudo config CacheDuration 00:30:00
+}
+
+function global:Execute-Elevated
+{
+  param()
+  if ($null -eq (Get-Command gsudo -ErrorAction Ignore))
+  {
+    Write-Error "gsudo not found, run Enable-Execute-Elevated"
+    return
+  }
+  gsudo $args
 }
 
 function global:Enable-SSH
@@ -53,83 +83,36 @@ function global:Enable-SSH
   New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
   if (!(Test-Path "HKLM:\SOFTWARE\OpenSSH"))
   {
-     mkdir "HKLM:\SOFTWARE\OpenSSH"
+    New-Item "HKLM:\SOFTWARE\OpenSSH" | Out-Null
   }
-
   New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value $shell -PropertyType String -Force
-  Get-Service ssh-agent | Restart-Service
-  Get-Service sshd | Restart-Service
+  Restart-Service ssh-agent
+  Restart-Service sshd
 }
 
-function global:Add-AdministratorsAuthorizedKeys()
+function global:Add-AdministratorsAuthorizedKeys
 {
   param($newKey)
 
   $serverKeys = "C:\ProgramData\ssh\administrators_authorized_keys"
   if ($null -ne $newKey)
   {
-    $when = [datetime]::Now.ToString("y/MM/dd HH:mm:ss");
-    Add-Content -Value "# Added by PSSudo.psm1 on $when for key $keyFile" $serverKeys -Encoding UTF8 -Force
+    $when = [datetime]::Now.ToString("y/MM/dd HH:mm:ss")
+    Add-Content -Value "# Added by PwrSudo on $when" $serverKeys -Encoding UTF8 -Force
     Add-Content -Value $newKey $serverKeys -Encoding UTF8 -Force
   }
   $acl = Get-Acl $serverKeys
   $acl.SetAccessRuleProtection($true, $false)
-  $administratorsRule = New-Object system.security.accesscontrol.filesystemaccessrule("Administrators","FullControl","Allow")
-  $systemRule = New-Object system.security.accesscontrol.filesystemaccessrule("SYSTEM","FullControl","Allow")
-  $acl.SetAccessRule($administratorsRule)
-  $acl.SetAccessRule($systemRule)
+  $acl.SetAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule("Administrators","FullControl","Allow")))
+  $acl.SetAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule("SYSTEM","FullControl","Allow")))
   $acl | Set-Acl
 }
 
-if ("Core" -eq $psedition)
-{
-  $_shell = "pwsh"
-}
-else
-{
-  $_shell = "powershell"
-}
+Export-ModuleMember -Function Test-IsUnix, Test-IsAdmin
+Export-ModuleMember -Function Open-Elevated, Execute-Elevated, Enable-Execute-Elevated
+Export-ModuleMember -Function Enable-SSH, Add-AdministratorsAuthorizedKeys
 
-function global:Enable-Execute-Elevated
-{
-  if (!(Test-IsAdmin))
-  {
-     Open-Elevated -wait $_shell -Ex ByPass -c Enable-Execute-Elevated
-     return;
-  }
-
-  $gsudoCmd = (get-command gsudo -ErrorAction Ignore)
-
-  if ($null -eq $gsudoCmd)
-  {
-    $scoopCmd = (get-command scoop -ErrorAction Ignore)
-    if ($null -eq $scoopCmd)
-    {
-      Invoke-Expression (New-Object System.Net.WebClient).DownloadString('https://get.scoop.sh')
-    }
-    scoop install gsudo
-    gsudo config cachemode auto
-    gsudo cache on
-  }
-}
-
-function global:Execute-Elevated {
-  param()
-  $gsudoCmd = (get-command gsudo -ErrorAction Ignore)
-  if ($null -eq $gsudoCmd)
-  {
-    Write-Error "gsudo not found, run Enable-Execute-Elevated"
-  }
-  gsudo $args
-}
-
-Export-ModuleMember -Function Enable-Execute-Elevated
-Export-ModuleMember -Function Execute-Elevated
-Export-ModuleMember -Function Open-Elevated
-Export-ModuleMember -Function Add-AdministratorsAuthorizedKeys
-
-set-alias elevate Open-Elevated -scope global
+Set-Alias elevate Open-Elevated -Scope Global
 if (!(Test-IsUnix)) {
-  set-alias sudo Execute-Elevated -scope global
+  Set-Alias sudo Execute-Elevated -Scope Global
 }
-
